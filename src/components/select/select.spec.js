@@ -1,8 +1,21 @@
 describe('<md-select>', function() {
-  var attachedElements = [];
+  var attachedElements = [],
+      body;
 
   beforeEach(module('material.components.input'));
   beforeEach(module('material.components.select'));
+
+  beforeEach(inject(function($document) {
+    body = $document[0].body;
+  }));
+
+  afterEach(inject(function ($document) {
+    var body = $document[0].body;
+    var children = body.querySelectorAll('.md-select-menu-container');
+    for (var i = 0; i < children.length; i++) {
+      angular.element(children[i]).remove();
+    }
+  }));
 
   afterEach(inject(function($document) {
     attachedElements.forEach(function(element) {
@@ -12,68 +25,97 @@ describe('<md-select>', function() {
 
     var selectMenus = $document.find('md-select-menu');
     selectMenus.remove();
+
+    var backdrops = $document.find('md-backdrop');
+    backdrops.remove();
   }));
 
-  it('should preserve tabindex', inject(function($document) {
+  it('should preserve tabindex', function() {
     var select = setupSelect('tabindex="2", ng-model="val"').find('md-select');
     expect(select.attr('tabindex')).toBe('2');
-  }));
+  });
 
-  it('supports non-disabled state', inject(function($document) {
+  it('supports non-disabled state', function() {
     var select = setupSelect('ng-model="val"').find('md-select');
     expect(select.attr('aria-disabled')).toBe('false');
-  }));
+  });
 
   it('supports disabled state', inject(function($document) {
     var select = setupSelect('disabled="disabled", ng-model="val"').find('md-select');
     openSelect(select);
+    expectSelectClosed(select);
     expect($document.find('md-select-menu').length).toBe(0);
     expect(select.attr('aria-disabled')).toBe('true');
   }));
 
-  it('supports passing classes to the container', inject(function($document, $timeout) {
+  it('supports passing classes to the container', inject(function($document) {
     var select = setupSelect('ng-model="val", md-container-class="test"').find('md-select');
     openSelect(select);
 
-    var container = $document[0].querySelector('.md-select-menu-container');
+    var container = body.querySelector('.md-select-menu-container');
     expect(container).toBeTruthy();
     expect(container.classList.contains('test')).toBe(true);
   }));
 
-  it('closes the menu if the element on backdrop click', inject(function($document, $rootScope) {
+  it('calls md-on-close when the select menu closes', inject(function($document, $rootScope) {
     var called = false;
     $rootScope.onClose = function() {
       called = true;
     };
     var select = setupSelect('ng-model="val", md-on-close="onClose()"', [1, 2, 3]).find('md-select');
     openSelect(select);
+    expectSelectOpen(select);
 
-    // Simulate click bubble from option to select menu handler
-    select.triggerHandler({
-      type: 'click',
-      target: angular.element($document.find('md-option')[0])
-    });
+    clickOption(select, 0);
 
     waitForSelectClose();
+    expectSelectClosed(select);
 
     expect(called).toBe(true);
   }));
 
-  it('closes the menu during scope.$destroy()', inject(function($document, $rootScope, $timeout) {
-    var container = angular.element("<div></div>");
-    var scope = $rootScope.$new();
-    var select = setupSelect(' ng-model="val" ', [1, 2, 3], false, scope).find('md-select');
-
-    $document[0].body.appendChild(container[0]);
-    container.append(select);
-
+  it('closes on backdrop click', inject(function($document) {
+    var select = setupSelect('ng-model="val"', [1, 2, 3]).find('md-select');
     openSelect(select);
 
-    scope.$destroy();
-    $rootScope.$digest();
-    $timeout.flush();
+    // Simulate click bubble from option to select menu handler
+    var backdrop = $document.find('md-backdrop');
+    expect(backdrop.length).toBe(1);
+    backdrop.triggerHandler('click');
 
-    expect($document[0].querySelector("md-select-menu")).toBe(null);
+    waitForSelectClose();
+
+    backdrop = $document.find('md-backdrop');
+    expect(backdrop.length).toBe(0);
+  }));
+
+  it('should not trigger ng-change without a change when using trackBy', inject(function($rootScope) {
+    var changed = false;
+    $rootScope.onChange = function() { changed = true; };
+    $rootScope.val = { id: 1, name: 'Bob' };
+
+    var opts = [ { id: 1, name: 'Bob' }, { id: 2, name: 'Alice' } ];
+    var select = setupSelect('ng-model="$root.val" ng-change="onChange()" ng-model-options="{trackBy: \'$value.id\'}"', opts);
+    expect(changed).toBe(false);
+    
+    openSelect(select);
+    clickOption(select, 1);
+    waitForSelectClose();
+    expect($rootScope.val.id).toBe(2);
+    expect(changed).toBe(true);
+  }));
+
+  it('should set touched only after closing', inject(function($compile, $rootScope) {
+    var form = $compile('<form name="myForm">' +
+                        '<md-select name="select" ng-model="val">' +
+                        '<md-option>1</md-option>' +
+                        '</md-select>' +
+                        '</form>')($rootScope);
+    var select = form.find('md-select');
+    openSelect(select);
+    expect($rootScope.myForm.select.$touched).toBe(false);
+    closeSelect();
+    expect($rootScope.myForm.select.$touched).toBe(true);
   }));
 
 
@@ -98,7 +140,7 @@ describe('<md-select>', function() {
 
       openSelect(select);
 
-      var opt = $document.find('md-option')[0].click();
+      clickOption(select, 0);
 
       waitForSelectClose();
 
@@ -114,17 +156,17 @@ describe('<md-select>', function() {
       expect(el).not.toHaveClass('md-input-has-value');
     }));
 
-    it('should match label to given input id', inject(function($rootScope) {
+    it('should match label to given input id', function() {
       var el = setupSelect('ng-model="$root.value", id="foo"');
       expect(el.find('label').attr('for')).toBe('foo');
       expect(el.find('md-select').attr('id')).toBe('foo');
-    }));
+    });
 
-    it('should match label to automatic input id', inject(function($rootScope) {
+    it('should match label to automatic input id', function() {
       var el = setupSelect('ng-model="$root.value"');
       expect(el.find('md-select').attr('id')).toBeTruthy();
       expect(el.find('label').attr('for')).toBe(el.find('md-select').attr('id'));
-    }));
+    });
   });
 
   describe('label behavior', function() {
@@ -168,6 +210,29 @@ describe('<md-select>', function() {
       expect(label.text()).toBe('One, Three');
       expect(label.hasClass('md-select-placeholder')).toBe(false);
     }));
+
+    it('supports raw html', inject(function($rootScope, $compile, $sce) {
+      $rootScope.val = 0;
+      $rootScope.opts = [
+        { id: 0, label: '<p>Hello World</p>' },
+        { id: 1, label: 'Hello World' }
+      ];
+      angular.forEach($rootScope.opts, function(opt) {
+        opt.label = $sce.trustAs('html', opt.label);
+      });
+      var select = $compile('<md-input-container>' +
+                              '<label>Placeholder</label>' +
+                              '<md-select ng-model="val" placeholder="Placeholder">' +
+                                '<md-option ng-value="opt.id" ng-repeat="opt in opts" ng-bind-html="opt.label"></md-option>' +
+                              '</md-select>' +
+                            '</md-input-container>')($rootScope).find('md-select');
+      var label = select.find('md-select-value').children().eq(0);
+      $rootScope.$digest();
+
+
+      expect(label.text()).toBe('Hello World');
+      expect(label.html()).toBe('<p>Hello World</p>');
+    }));
   });
 
   it('auto-infers a value when none specified', inject(function($rootScope) {
@@ -177,7 +242,7 @@ describe('<md-select>', function() {
       expect(selectedOptions(el).length).toBe(1);
   }));
 
-  it('errors for duplicate md-options, non-dynamic value', inject(function($rootScope) {
+  it('errors for duplicate md-options, non-dynamic value', inject(function() {
     expect(function() {
       setup('ng-model="$root.model"', '<md-option value="a">Hello</md-option>' +
             '<md-option value="a">Goodbye</md-option>');
@@ -219,6 +284,13 @@ describe('<md-select>', function() {
       it('renders nothing if no initial value is set', function() {
         var el = setup('ng-model="$root.model"', ['a','b','c']);
         expect(selectedOptions(el).length).toBe(0);
+      });
+
+      it('supports circular references', function() {
+        var opts = [{ id: 1 }, { id: 2 }];
+        opts[0].refs = opts[1];
+        opts[1].refs = opts[0];
+        setup('ng-model="$root.model"', opts, { renderValueAs: 'value.id' });
       });
 
       it('renders model change by selecting new and deselecting old', inject(function($rootScope) {
@@ -531,7 +603,7 @@ describe('<md-select>', function() {
       it('does not let an empty array satisfy required', inject(function($rootScope, $compile) {
           $rootScope.model = [];
           $rootScope.opts = [1, 2, 3, 4];
-          var form = $compile('<form name="testForm">' +
+          $compile('<form name="testForm">' +
             '<md-select ng-model="model", name="multiSelect" required="required" multiple="multiple">' +
               '<md-option ng-repeat="opt in opts" ng-value="opt"></md-option>' +
             '</md-select></form>')($rootScope);
@@ -638,25 +710,24 @@ describe('<md-select>', function() {
       expect(select.attr('aria-label')).toBe('Pick');
     }));
 
-    it('preserves existing aria-label', inject(function($rootScope) {
+    it('preserves existing aria-label', function() {
       var select = setupSelect('ng-model="someVal", aria-label="Hello world", placeholder="Pick"').find('md-select');
       expect(select.attr('aria-label')).toBe('Hello world');
-    }));
+    });
 
     it('should expect an aria-label if none is present', inject(function($compile, $rootScope, $log) {
       spyOn($log, 'warn');
-      var select = setupSelect('ng-model="someVal"', null, true).find('md-select');
+      setupSelect('ng-model="someVal"', null, true).find('md-select');
       $rootScope.$apply();
       expect($log.warn).toHaveBeenCalled();
 
       $log.warn.calls.reset();
-      select = setupSelect('ng-model="someVal", aria-label="Hello world"').find('md-select');
+      setupSelect('ng-model="someVal", aria-label="Hello world"').find('md-select');
       $rootScope.$apply();
       expect($log.warn).not.toHaveBeenCalled();
     }));
 
-    it('sets up the aria-expanded attribute', inject(function($document, $timeout) {
-      disableAnimations();
+    it('sets up the aria-expanded attribute', inject(function($document) {
 
       expect(el.attr('aria-expanded')).toBe('false');
       openSelect(el);
@@ -670,11 +741,11 @@ describe('<md-select>', function() {
     }));
     it('sets up the aria-multiselectable attribute', inject(function($document, $rootScope) {
       $rootScope.model = [1,3];
-      var el = setupMultiple('ng-model="$root.model"', [1,2,3]);
+      var el = setupSelectMultiple('ng-model="$root.model"', [1,2,3]).find('md-select');
 
       expect(el.attr('aria-multiselectable')).toBe('true');
     }));
-    it('sets up the aria-selected attribute', inject(function($rootScope) {
+    it('sets up the aria-selected attribute', function() {
       var el = setup('ng-model="$root.model"', [1,2,3]);
       var options = el.find('md-option');
       expect(options.eq(2).attr('aria-selected')).toBe('false');
@@ -683,7 +754,7 @@ describe('<md-select>', function() {
         target: el.find('md-option')[2]
       });
       expect(options.eq(2).attr('aria-selected')).toBe('true');
-    }));
+    });
   });
 
   describe('keyboard controls', function() {
@@ -699,32 +770,28 @@ describe('<md-select>', function() {
         var el = setupSelect('ng-model="someModel"', [1, 2, 3]).find('md-select');
         pressKey(el, 32);
         waitForSelectOpen();
-        var selectMenu = angular.element($document.find('md-select-menu'));
-        expect(selectMenu.length).toBe(1);
+        expectSelectOpen(el);
       }));
 
       it('can be opened with an enter key', inject(function($document) {
         var el = setupSelect('ng-model="someModel"', [1, 2, 3]).find('md-select');
         pressKey(el, 13);
         waitForSelectOpen();
-        var selectMenu = angular.element($document.find('md-select-menu'));
-        expect(selectMenu.length).toBe(1);
+        expectSelectOpen(el);
       }));
 
       it('can be opened with the up key', inject(function($document) {
         var el = setupSelect('ng-model="someModel"', [1, 2, 3]).find('md-select');
         pressKey(el, 38);
         waitForSelectOpen();
-        var selectMenu = angular.element($document.find('md-select-menu'));
-        expect(selectMenu.length).toBe(1);
+        expectSelectOpen(el);
       }));
 
       it('can be opened with the down key', inject(function($document) {
         var el = setupSelect('ng-model="someModel"', [1, 2, 3]).find('md-select');
         pressKey(el, 40);
         waitForSelectOpen();
-        var selectMenu = angular.element($document.find('md-select-menu'));
-        expect(selectMenu.length).toBe(1);
+        expectSelectOpen(el);
       }));
 
       it('supports typing an option name', inject(function($document, $rootScope) {
@@ -735,16 +802,15 @@ describe('<md-select>', function() {
     });
 
     describe('md-select-menu', function() {
-      it('can be closed with escape', inject(function($document, $rootScope, $animate) {
-        disableAnimations();
-
+      it('can be closed with escape', inject(function($document) {
         var el = setupSelect('ng-model="someVal"', [1, 2, 3]).find('md-select');
         openSelect(el);
-        var selectMenu = angular.element($document.find('md-select-menu'));
+        expectSelectOpen(el);
+        var selectMenu = $document.find('md-select-menu');
         expect(selectMenu.length).toBe(1);
         pressKey(selectMenu, 27);
         waitForSelectClose();
-        expect($document.find('md-select-menu').length).toBe(0);
+        expectSelectClosed(el);
       }));
     });
   });
@@ -767,10 +833,15 @@ describe('<md-select>', function() {
     return el;
   }
 
-  function setup(attrs, options) {
+  function setupSelectMultiple(attrs, options, skipLabel, scope) {
+    attrs = (attrs || '') + ' multiple';
+    return setupSelect(attrs, options, skipLabel, scope);
+  }
+
+  function setup(attrs, options, compileOpts) {
     var el;
     inject(function($compile, $rootScope) {
-      var optionsTpl = optTemplate(options);
+      var optionsTpl = optTemplate(options, compileOpts);
       var fullTpl = '<md-select-menu ' + (attrs || '') + '>' + optionsTpl +
                '</md-select-menu>';
       el = $compile(fullTpl)($rootScope);
@@ -786,12 +857,14 @@ describe('<md-select>', function() {
     return setup(attrs, options);
   }
 
-  function optTemplate(options) {
+
+  function optTemplate(options, compileOpts) {
     var optionsTpl = '';
     inject(function($rootScope) {
       if (angular.isArray(options)) {
         $rootScope.$$values = options;
-        optionsTpl = '<md-option ng-repeat="value in $$values" ng-value="value">{{value}}</md-option>';
+        var renderValueAs = compileOpts ? compileOpts.renderValueAs || 'value' : 'value';
+        optionsTpl = '<md-option ng-repeat="value in $$values" ng-value="value"><div class="md-text">{{' + renderValueAs + '}}</div></md-option>';
       } else if (angular.isString(options)) {
         optionsTpl = options;
       }
@@ -804,10 +877,23 @@ describe('<md-select>', function() {
   }
 
   function openSelect(el) {
+    if (el[0].nodeName != 'MD-SELECT') {
+      el = el.find('md-select');
+    }
     try {
       el.triggerHandler('click');
       waitForSelectOpen();
-    } catch(e) { }
+      el.triggerHandler('blur');
+    } catch (e) { }
+  }
+
+  function closeSelect() {
+    inject(function($document) {
+      var backdrop = $document.find('md-backdrop');
+      if (!backdrop.length) throw Error('Attempted to close select with no backdrop present');
+      $document.find('md-backdrop').triggerHandler('click');
+    });
+    waitForSelectClose();
   }
 
 
@@ -828,6 +914,42 @@ describe('<md-select>', function() {
     inject(function($material) {
       $material.flushInterimElement();
     });
+  }
+
+  function clickOption(select, index) {
+    inject(function($rootScope, $document) {
+      expectSelectOpen(select);
+      var openMenu = $document.find('md-select-menu');
+      var opt = angular.element(openMenu.find('md-option')[index]).find('div')[0];
+
+      if (!opt) throw Error('Could not find option at index: ' + index);
+      var target = angular.element(opt);
+      angular.element(openMenu).triggerHandler({
+        type: 'click',
+        target: target
+      });
+      angular.element(openMenu).triggerHandler({
+        type: 'click',
+        target: target,
+        currentTarget: openMenu[0]
+      });
+    });
+  }
+
+  function expectSelectClosed(element) {
+    element = angular.element(element);
+    var menu = angular.element(body.querySelector('.md-select-menu-container'));
+    if (menu.length) {
+      expect(menu.hasClass('md-active')).toBe(false);
+      expect(menu.attr('aria-hidden')).toBe('true');
+    }
+  }
+
+  function expectSelectOpen(element) {
+    element = angular.element(element);
+    var menu = angular.element(body.querySelector('.md-select-menu-container'));
+    expect(menu.hasClass('md-active')).toBe(true);
+    expect(menu.attr('aria-hidden')).toBe('false');
   }
 
 });
